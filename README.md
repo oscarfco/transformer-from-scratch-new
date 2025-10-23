@@ -24,8 +24,15 @@ A standalone implementation of a transformer language model trained from scratch
    pip install -r requirements.txt
    ```
 
-2. **Prepare Data**:
-   - Place your training data in `./data/tiny_stories_train.npy`
+2. **Download Training Data**:
+   ```bash
+   # Download the Tiny Stories dataset (1.12GB)
+   wget -O data/tiny_stories_train.npy "https://drive.google.com/uc?export=download&id=15HUC3XPMSadispQ3ajIkUETUYmwUJXhD"
+   ```
+   
+   **Note**: The training data is too large for GitHub. Download it from Google Drive:
+   - [Download tiny_stories_train.npy from Google Drive](https://drive.google.com/file/d/15HUC3XPMSadispQ3ajIkUETUYmwUJXhD/view?usp=drive_link)
+   - Place the downloaded file in `./data/tiny_stories_train.npy`
    - The data should be a numpy array of tokenized text
 
 3. **Run Training**:
