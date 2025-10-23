@@ -1,0 +1,14 @@
+# Large data files
+data/
+*.npy
+
+# Model checkpoints
+checkpoints/
+*.pt
+
+# Training logs and wandb
+wandb/
+__pycache__/
+
+# Pickle files (can be large)
+*.pkl
