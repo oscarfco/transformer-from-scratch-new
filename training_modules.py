@@ -26,6 +26,10 @@ def cross_entropy(logits, targets):
     return reduce(numerator-log_denom, '... B -> ', 'mean') * -1
 
 
+def adjust_learning_rate(optimizer, it, scheduler_params):
+    return
+
+
 class AdamW(torch.optim.Optimizer):
     def __init__(self, params, lr, weight_decay, betas, eps):
         if lr < 0:
@@ -131,11 +135,13 @@ def save_checkpoint(model, optimizer, iteration, out):
     torch.save(obj, out)
 
 
-def load_checkpoint(src, model, optimizer):
+def load_checkpoint(src, model, optimizer=None):
     obj = torch.load(src)
 
     model.load_state_dict(obj["model_state"])
-    optimizer.load_state_dict(obj["optim_state"])
+
+    if optimizer:
+        optimizer.load_state_dict(obj["optim_state"])
 
     return obj["it"]
 
@@ -183,10 +189,10 @@ def decode(model, tok, model_input, max_generated_tokens, temperature, top_p):
         # extend the input 
         model_input = torch.cat((model_input, token_idx), dim=-1)
         
-        if tok.decode(model_input[:, -1].numpy()) == '<|endoftext|>':
+        if tok.decode(model_input[:, -1].cpu().numpy()) == '<|endoftext|>':
             break
 
-    return tok.decode(model_input.squeeze(0).numpy())
+    return tok.decode(model_input.squeeze(0).cpu().numpy())
         
         
 

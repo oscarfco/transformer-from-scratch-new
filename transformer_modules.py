@@ -90,7 +90,9 @@ class RotaryPositionalEmbedding(nn.Module):
     def forward(self, x: torch.Tensor, token_positions=None):
         # Step 1: Slice the sin and cos tensor so we get the desired indices
         # token_positions = torch.arange(start=0, end=x.shape[1])
+        # breakpoint()
         if token_positions is not None:
+            token_positions = torch.arange(token_positions, device=x.device)
             sliced_sin_values = self.sin_values[token_positions]
             sliced_cos_values = self.cos_values[token_positions]
         else:
@@ -165,8 +167,8 @@ class multihead_self_attention(nn.Module):
         for h in range(self.num_heads):
             start_slice = h * self.dk
             end_slice = start_slice + self.dk
-            sliced_q = self.rope(Q[:, :, start_slice:end_slice], self.token_positions) if self.rope_params else Q[:, :, start_slice:end_slice]
-            sliced_k = self.rope(K[:, :, start_slice:end_slice], self.token_positions) if self.rope_params else K[:, :, start_slice:end_slice]
+            sliced_q = self.rope(Q[:, :, start_slice:end_slice], seq_len) if self.rope_params else Q[:, :, start_slice:end_slice]
+            sliced_k = self.rope(K[:, :, start_slice:end_slice], seq_len) if self.rope_params else K[:, :, start_slice:end_slice]
             sliced_v = V[:, :, start_slice:end_slice]
 
             multi_head_out.append(scaled_dot_product_attention(sliced_q, sliced_k, sliced_v, mask.bool()))

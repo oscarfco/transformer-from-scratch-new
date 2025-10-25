@@ -9,11 +9,13 @@ D_FF=1344
 ROPE_THETA=10000
 NUM_LAYERS=4
 NUM_HEADS=16
-TOKENS_PROCESSED_TOTAL=40000000
-BATCH_SIZE=32
-LEARNING_RATE=0.01
-DEVICE=mps
+TOKENS_PROCESSED_TOTAL=50000000
+BATCH_SIZE=256
+LEARNING_RATE=0.06
+DEVICE=cuda
 TRAINING_DSET_PATH="./data/tiny_stories_train.npy"
+TOKENIZER_PATH="./data/tiny_stories_train.pkl"
+EVAL_PROMPT="Once upon a time"
 
 # optimizer args
 WEIGHT_DECAY=0.01
@@ -21,10 +23,18 @@ BETA1=0.9
 BETA2=0.999
 EPS=1e-8
 
+# scheduler args
+MAX_LR=0.02
+MIN_LR=0.002
+WARMUP_ITERS=$(echo "scale=0; ($TOKENS_PROCESSED_TOTAL / ($BATCH_SIZE * $CONTEXT_LENGTH)) * 0.05 / 1" | bc)
+COSINE_CYCLE_ITERS=$(echo "scale=0; $TOKENS_PROCESSED_TOTAL / ($BATCH_SIZE * $CONTEXT_LENGTH)" | bc)
+
 # save args
 SAVE_EVERY=0.2
+LOG_EVERY=0.2
+NUM_EVAL_GENERATIONS=1
 
-/Users/oscar.orahilly/miniconda3/bin/python training.py \
+python training.py \
   --vocab-size "$VOCAB_SIZE" \
   --context-length "$CONTEXT_LENGTH" \
   --d-model "$D_MODEL" \
@@ -41,4 +51,12 @@ SAVE_EVERY=0.2
   --eps "$EPS" \
   --device "$DEVICE" \
   --training-dset-path "$TRAINING_DSET_PATH" \
-  --save-every "$SAVE_EVERY"
+  --save-every "$SAVE_EVERY" \
+  --log-every "$LOG_EVERY" \
+  --tokenizer-path "$TOKENIZER_PATH" \
+  --eval-prompt "$EVAL_PROMPT" \
+  --num-eval-generations "$NUM_EVAL_GENERATIONS" \
+  --max-lr "$MAX_LR" \
+  --min-lr "$MIN_LR" \
+  --warmup-iters "$WARMUP_ITERS" \
+  --cosine-cycle-iters "$COSINE_CYCLE_ITERS"
