@@ -46,7 +46,7 @@ def run_eval_and_sample(model, tokenizer, batch_size, context_length, device, pr
 
     with torch.no_grad():
         eval_loss = run_eval(model, tokenizer, batch_size, context_length, device)
-        completions = prompt_model(model, tokenizer, prompt, device, num_eval_generations)
+        completions = prompt_model(model, tokenizer, prompt, device, max_generated_tokens=100, num_generations=num_eval_generations)
     
     return eval_loss, completions
 

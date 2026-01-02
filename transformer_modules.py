@@ -3,12 +3,15 @@ import torch.nn as nn
 import numpy as np
 import math
 from einops import einsum, rearrange, reduce
+from lora_module import LoRA
 
 class Linear(nn.Module):
     def __init__(self, in_features, out_features, device=None, dtype=None):
         super().__init__()
         W = torch.empty(in_features, out_features, device=device, dtype=dtype)
-        W = nn.init.trunc_normal_(W)
+
+        std = math.sqrt(2 / (in_features + out_features))
+        W = nn.init.trunc_normal_(W, std=std, a=-3*std, b=3*std)
         self.W = nn.Parameter(W)
         
     
@@ -21,7 +24,7 @@ class Embedding(nn.Module):
     def __init__(self, num_embeddings, embedding_dim, device=None, dtype=None):
         super().__init__() 
         embedding_matrix = torch.empty(num_embeddings, embedding_dim, device=device, dtype=dtype)
-        embedding_matrix = nn.init.trunc_normal_(embedding_matrix)
+        embedding_matrix = nn.init.trunc_normal_(embedding_matrix, std=1.0, a=-3.0, b=3.0)
         self.embedding_matrix = nn.Parameter(embedding_matrix)
         
     
@@ -34,20 +37,18 @@ class RMSNorm(nn.Module):
         super().__init__()
         self.d_model = d_model
         self.eps = eps 
-        gain = torch.empty(d_model, device=device, dtype=dtype)
-        gain = nn.init.trunc_normal_(gain)
+        gain = torch.ones(d_model, device=device, dtype=dtype)
         self.gain = nn.Parameter(gain)
 
     def forward(self, x: torch.Tensor):
         
         in_dtype = x.dtype
+        
         x = x.to(torch.float32)
+        rms = torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
+        x = x * rms
 
-        denom = torch.sqrt((1/self.d_model) * reduce(x**2 + self.eps, "... d_model -> ... ", 'sum'))
-        denom = rearrange(denom, "... -> ... 1")
-
-        result =  einsum(torch.div(x, denom), self.gain, "... d_model, d_model -> ... d_model")
-        return result.to(in_dtype)
+        return (self.gain * x).to(in_dtype)
     
 
 class Swiglu(nn.Module):
@@ -133,7 +134,7 @@ def scaled_dot_product_attention(Q: torch.Tensor, K: torch.Tensor, V: torch.Tens
 
 
 class multihead_self_attention(nn.Module):
-    def __init__(self, d_model, num_heads, rope_params=None, device=None, dtype=None):
+    def __init__(self, d_model, num_heads, rope_params=None, lora=False, lora_config=None, device=None, dtype=None):
         super().__init__()
 
         self.d_model = d_model
@@ -141,6 +142,7 @@ class multihead_self_attention(nn.Module):
         self.dk = self.d_model // self.num_heads
         self.rope_params = rope_params
         self.device = device
+        self.lora = lora
 
         if self.rope_params:
             theta = rope_params["theta"]
@@ -148,15 +150,35 @@ class multihead_self_attention(nn.Module):
             self.token_positions = rope_params.get("token_positions", None)
             self.rope = RotaryPositionalEmbedding(theta, self.dk, max_seq_len, device=device)
 
-        self.q_proj_weight = nn.Parameter(nn.init.trunc_normal_(torch.empty(d_model, d_model, device=device, dtype=dtype)))
-        self.k_proj_weight = nn.Parameter(nn.init.trunc_normal_(torch.empty(d_model, d_model, device=device, dtype=dtype)))
-        self.v_proj_weight = nn.Parameter(nn.init.trunc_normal_(torch.empty(d_model, d_model, device=device, dtype=dtype)))
-        self.o_proj_weight = nn.Parameter(nn.init.trunc_normal_(torch.empty(d_model, d_model, device=device, dtype=dtype)))
+        # Initialize projection weights: N(0, 2/(din + dout)) truncated at [-3σ, 3σ]
+        # For d_model x d_model: σ² = 2/(d_model + d_model) = 1/d_model, so σ = 1/sqrt(d_model)
+        std = math.sqrt(2 / (d_model + d_model))
+        q_weight = torch.empty(d_model, d_model, device=device, dtype=dtype)
+        k_weight = torch.empty(d_model, d_model, device=device, dtype=dtype)
+        v_weight = torch.empty(d_model, d_model, device=device, dtype=dtype)
+        o_weight = torch.empty(d_model, d_model, device=device, dtype=dtype)
+        
+        self.q_proj_weight = nn.Parameter(nn.init.trunc_normal_(q_weight, std=std, a=-3*std, b=3*std))
+        self.k_proj_weight = nn.Parameter(nn.init.trunc_normal_(k_weight, std=std, a=-3*std, b=3*std))
+        self.v_proj_weight = nn.Parameter(nn.init.trunc_normal_(v_weight, std=std, a=-3*std, b=3*std))
+        self.o_proj_weight = nn.Parameter(nn.init.trunc_normal_(o_weight, std=std, a=-3*std, b=3*std))
+        
+        # Initialize LoRA modules for q and v projections if LoRA is enabled
+        if self.lora and lora_config is not None:
+            rank = lora_config.get("rank", 8)
+            d = lora_config.get("d", d_model)
+            self.lora_q = LoRA(rank=rank, d=d)
+            self.lora_v = LoRA(rank=rank, d=d)
         
     def forward(self, x):
         Q = einsum(self.q_proj_weight, x, "hdk d_model, ... seq_len d_model -> ... seq_len hdk")
         K = einsum(self.k_proj_weight, x, "hdk d_model, ... seq_len d_model -> ... seq_len hdk")
         V = einsum(self.v_proj_weight, x, "hdk d_model, ... seq_len d_model -> ... seq_len hdk")
+        
+        # Add LoRA outputs to Q and V if LoRA is enabled
+        if self.lora:
+            Q = Q + self.lora_q(x)
+            V = V + self.lora_v(x)
 
         # Generate the masks
         seq_len = x.shape[-2]
@@ -179,7 +201,7 @@ class multihead_self_attention(nn.Module):
 
 
 class TransformerBlock(nn.Module):
-    def __init__(self, d_model, num_heads, d_ff, max_seq_len, theta, token_positions=None, device=None):
+    def __init__(self, d_model, num_heads, d_ff, max_seq_len, theta, token_positions=None, lora=False, lora_config=None, device=None):
         super().__init__()
 
         self.rms_norm_1 = RMSNorm(d_model=d_model, device=device)
@@ -194,6 +216,8 @@ class TransformerBlock(nn.Module):
         self.mha = multihead_self_attention(d_model=d_model, 
                                             num_heads=num_heads, 
                                             rope_params=rope_params,
+                                            lora=lora,
+                                            lora_config=lora_config,
                                             device=device)
 
         self.ffn = Swiglu(d_ff=d_ff, d_model=d_model, device=device)
@@ -206,13 +230,13 @@ class TransformerBlock(nn.Module):
         return z
     
 class TransformerLM(nn.Module):
-    def __init__(self, vocab_size, context_length, num_layers, d_model, num_heads, d_ff, rope_theta, token_positions=None, device=None):
+    def __init__(self, vocab_size, context_length, num_layers, d_model, num_heads, d_ff, rope_theta, token_positions=None, lora=False, lora_config=None, device=None):
         super().__init__()
 
         self.embedding = Embedding(num_embeddings=vocab_size, embedding_dim=d_model, device=device)
         self.num_layers = num_layers
 
-        self.transformer_blocks = [
+        self.transformer_blocks = nn.ModuleList([
             TransformerBlock(
                 d_model=d_model, 
                 num_heads=num_heads, 
@@ -220,10 +244,12 @@ class TransformerLM(nn.Module):
                 theta=rope_theta, 
                 max_seq_len=context_length,
                 token_positions=token_positions,
+                lora=lora,
+                lora_config=lora_config,
                 device=device
             ) 
             for _ in range(num_layers)
-        ]
+        ])
 
         self.final_norm = RMSNorm(d_model=d_model, device=device)
         self.unembedding = Linear(vocab_size, d_model, device=device)

@@ -7,6 +7,7 @@ from collections.abc import Callable, Iterable
 from typing import Optional
 from tqdm import tqdm 
 import random
+import os
 
 def cross_entropy(logits, targets):
     # logits = Float[Tensor, " batch_size vocab_size"]
@@ -126,6 +127,11 @@ def get_batch(dataset, batch_size, context_length, device):
 
 
 def save_checkpoint(model, optimizer, iteration, out):
+    # Create directory if it doesn't exist
+    dirname = os.path.dirname(out)
+    if dirname:
+        os.makedirs(dirname, exist_ok=True)
+    
     obj = {
         "model_state": model.state_dict(),
         "optim_state": optimizer.state_dict(),

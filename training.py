@@ -1,5 +1,6 @@
 import argparse
 import torch
+import numpy as np
 import pickle 
 import wandb
 from tqdm import tqdm
@@ -98,7 +99,6 @@ def train(model, tokenizer, **kwargs):
     eval_every_steps = int(log_every * total_steps)
 
     pbar = tqdm(range(total_steps), desc="Training", ncols=100)
-    table = wandb.Table(columns=["step", "completions"])
 
     for e in pbar:
         model.train()
@@ -132,18 +132,22 @@ def train(model, tokenizer, **kwargs):
 
         if e % save_every_steps == 0:
             save_path = f"checkpoints/model_step_{e}.pt"
+            print(f"💾 Saving checkpoint to {save_path}")
             save_checkpoint(model, optim, e, save_path)
         
         if e % eval_every_steps == 0:
             eval_loss, completions = run_eval_and_sample(model, tokenizer, batch_size, context_length, device, eval_prompt, num_eval_generations)
             logger.log({"eval/loss": eval_loss, "eval_step": e})
 
+            # Create a new table for each evaluation step
+            table = wandb.Table(columns=["step", "completions"])
             for c in completions:
                 table.add_data(e, c)
             logger.log({"completions_table": table})
             
 
     final_save_path = "checkpoints/model_step_final.pt"
+    print(f"💾 Saving final checkpoint to {final_save_path}")
     save_checkpoint(model, optim, e, final_save_path)
 
     return
